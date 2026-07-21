@@ -1,0 +1,3 @@
+.claude/projects/
+.claude/settings.local.json
+*.log
