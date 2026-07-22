@@ -1,4 +1,4 @@
-# document-codebase: AI-Context Documentation Workflow
+# document-codebase: AI-Context Documentation Workflow[^1]
 
 A generic, reusable Claude Code Workflow that extracts durable business/functional context from arbitrary codebases, producing standardized markdown documentation for AI coding assistants.
 
@@ -214,3 +214,7 @@ A stays unchanged (confirmed by design to keep re-run scope bounded).
 ## License
 
 This is a generic, open-ended tool for codebase documentation. Use it freely on any codebase, for any purpose.
+
+---
+
+> Built as R&D at Brain Station 23 PLC, exploring how existing codebases can be brought to AI-DLC readiness — durable, machine-readable context that lets AI coding assistants work on a codebase without re-deriving it from scratch each time.
