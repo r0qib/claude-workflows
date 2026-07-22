@@ -1,4 +1,4 @@
-# document-codebase: AI-Context Documentation Workflow[^1]
+# document-codebase: AI-Context Documentation Workflow
 
 A generic, reusable Claude Code Workflow that extracts durable business/functional context from arbitrary codebases, producing standardized markdown documentation for AI coding assistants.
 
