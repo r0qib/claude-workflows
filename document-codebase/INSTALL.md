@@ -5,19 +5,19 @@ Copy `document-codebase` into your target repository in three steps.
 ## Step 1: Copy the skill
 
 ```bash
-cp -r skills/codebase-context-extractor <your-repo>/.claude/skills/
+cp -r .claude/skills/codebase-context-extractor <your-repo>/.claude/skills/
 ```
 
 ## Step 2: Copy the workflow
 
 ```bash
-cp workflows/document-codebase.js <your-repo>/.claude/workflows/
+cp .claude/workflows/document-codebase.js <your-repo>/.claude/workflows/
 ```
 
 ## Step 3: Copy the slash command
 
 ```bash
-cp commands/document-codebase.md <your-repo>/.claude/commands/
+cp .claude/commands/document-codebase.md <your-repo>/.claude/commands/
 ```
 
 ## Done
@@ -25,7 +25,7 @@ cp commands/document-codebase.md <your-repo>/.claude/commands/
 In your target repository, you can now run:
 
 ```
-/document-codebase
+/document-codebase [maxUnits:number] [UnitFilter:string]
 ```
 
 The workflow will auto-detect your codebase's stack and structure, then extract documentation into `docs/ai-context/`.

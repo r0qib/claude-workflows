@@ -34,34 +34,91 @@ Given any existing codebase, `document-codebase`:
 
 ## Installation (copy to your target repo)
 
+This is a portable, drop-in tool — three files, no dependencies beyond Claude Code + git.
+
 ```bash
-cp -r skills/codebase-context-extractor <target-repo>/.claude/skills/
-cp workflows/document-codebase.js       <target-repo>/.claude/workflows/
-cp commands/document-codebase.md        <target-repo>/.claude/commands/
+cp -r .claude/skills/codebase-context-extractor <target-repo>/.claude/skills/
+cp .claude/workflows/document-codebase.js       <target-repo>/.claude/workflows/
+cp .claude/commands/document-codebase.md        <target-repo>/.claude/commands/
 ```
+
+(See `INSTALL.md` for the same steps spelled out individually.)
+
+No config file, no per-repo setup — the workflow auto-detects stack and structure on first run.
 
 ## Usage
 
-In the target repository:
+In the target repository, run:
 
 ```
 /document-codebase [maxUnits] [unitFilter]
 ```
 
-**First run:**
-- Auto-detects stack, proposes unit boundaries
-- Extracts all units (capped at `maxUnits`, default 10, max 25)
-- Writes `00-overview.md`, `index.md`, and per-unit docs
+Both arguments are optional and positional — `maxUnits` first, `unitFilter` second.
 
-**Later runs:**
+| Arg | Type | Default | Meaning |
+|---|---|---|---|
+| `maxUnits` | integer | `10` (hard cap `25`) | Max number of new/stale units to extract **this run**. Anything beyond the cap is deferred, not skipped — it's picked up automatically on your next run. |
+| `unitFilter` | string | none (no filter) | Only consider units whose `id` or `title` **contains** this substring. Plain substring match — not a glob or regex. Applied *before* `maxUnits`, so it narrows the candidate pool first, then caps within that. |
+
+### Common invocations
+
+```
+/document-codebase
+```
+Default run: detect/refresh up to 10 new-or-stale units, no filter. This is what you want for routine re-runs on a repo you've already documented once.
+
+```
+/document-codebase 25
+```
+Raise the ceiling to the max (25) for a big push on a large repo — still bounded, just less deferral.
+
+```
+/document-codebase 5 auth
+```
+Only touch units related to "auth" (matches `id` or `title`), capped at 5. Use this for a targeted re-doc of one area without disturbing the rest of the manifest.
+
+```
+/document-codebase 25 payment
+```
+Filter to "payment"-related units, but don't cap below what the filter already found (up to 25).
+
+### Resuming an incomplete run (the case you'll hit on large repos)
+
+If a run's candidate unit count exceeds `maxUnits`, the extra units are **not lost** — they're recorded in the result as `deferred` and reported to you at the end:
+
+```
+Deferred to next run: 14 units
+(run /document-codebase again to continue)
+```
+
+To pick up where you left off, run the exact same command again:
+
+```
+/document-codebase
+```
+
+Each run re-reads `index.md`'s `last_run_commit`, git-diffs from there, and re-classifies every previously known unit as `stale`/`unchanged`/`removed` — units that were merely *deferred* (not yet extracted, source unchanged) will simply be re-proposed as candidates and picked up in commit-hash order until the whole backlog is documented. No flags needed to "resume" — deferral + re-run is the resume mechanism. If you want to fast-forward through a large backlog, just bump `maxUnits` on the next call instead of running the default repeatedly.
+
+**First run on a repo:**
+- Auto-detects stack, proposes unit boundaries (feature/route/module — chosen automatically per codebase)
+- Extracts up to `maxUnits` units; defers the rest
+- Writes `00-overview.md`, `index.md`, and per-unit docs under `docs/ai-context/`
+
+**Later runs on the same repo:**
 - Reads `index.md` to get the last-run commit hash
-- Runs `git diff` to find changed files
-- Re-extracts only stale units; skips unchanged ones (fast)
-- Updates `index.md` manifest
+- Runs `git diff` against it to find changed files
+- Re-extracts only `stale` units (touched files) and any still-`deferred` units; skips `unchanged` ones entirely (fast, idempotent)
+- Updates `index.md` manifest, carrying forward unchanged units untouched
 
-**Options:**
-- `maxUnits`: Process at most N units per run. Re-run to continue remaining units.
-- `unitFilter`: Only process units whose id or title contains this string (for targeted re-runs).
+### How it partitions a codebase
+
+The Recon phase picks the unit granularity per repo, not globally — it looks for:
+- **feature/domain** boundaries if there's an obvious `features/`, `pages/`, or `domains/` directory
+- **route/endpoint** boundaries if routes are centralized and orthogonal (e.g. Express `routes/`)
+- **module/top-level** as the fallback for anything else
+
+Each unit gets a stable kebab-case `id`, a `title`, a `type`, and a list of file `globs` that define its read scope. This choice (and the rationale for it) is written into `00-overview.md` on first run — if it picks a granularity you disagree with, edit `00-overview.md`'s unit guidance and re-run rather than fighting the auto-detection.
 
 ## Architecture
 
@@ -117,20 +174,6 @@ Each unit doc:
 No cascading staleness: if unit A depends on unit B and B changes, only B is re-extracted.
 A stays unchanged (confirmed by design to keep re-run scope bounded).
 
-## Testing checklist
-
-See `.claude/plans/i-am-new-to-velvety-panda.md`, section 5, for 9 concrete test scenarios:
-
-- Pure-logic tests (topological sort correctness)
-- End-to-end dry run on fixture repo
-- Idempotency (run twice, no changes → second run is a no-op)
-- Targeted drift (touch one file → only that unit re-extracted)
-- Cap/resume (maxUnits=2 → defers rest, re-run continues)
-- Removed unit (deleted source → flagged, not auto-deleted)
-- Manual hallucination spot audit (sample docs, verify citations)
-- Injection resilience (ignore instruction-shaped comments)
-- Schema/render conformance
-
 ## Known limitations (v1)
 
 1. **No cascading staleness.** Changed dependency does not auto-invalidate dependents (by design, to bound re-run cost).
@@ -159,11 +202,9 @@ See `.claude/plans/i-am-new-to-velvety-panda.md`, section 5, for 9 concrete test
 
 ## Design documents
 
-- **Plan**: `.claude/plans/i-am-new-to-velvety-panda.md` — full design, assumptions, rationale, test plan
 - **Skill**: `.claude/skills/codebase-context-extractor/SKILL.md` — extraction discipline, rules, golden rules
 - **Workflow script**: `.claude/workflows/document-codebase.js` — four phases, schemas, orchestration logic
 - **Slash command**: `.claude/commands/document-codebase.md` — entry point, renders all output doc types
-- **Deep research**: Industry patterns, academic SOTA (CodeWiki, DocAgent), best practices — informed this design
 
 ## Related
 
