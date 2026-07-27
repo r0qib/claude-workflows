@@ -10,6 +10,10 @@ Each folder contains a complete skill or workflow package with its own documenta
   - Includes workflow, skill, and command integrations
   - See [document-codebase/README.md](document-codebase/README.md) for details
 
+- **justdoit/** — Slash command that runs a feature end-to-end (brainstorm → design → implement → test, commit opt-in) from one natural-language prompt, interactive or autonomous
+  - Command + two skills (commit-batcher, assumption-journal); channels the `/sc:*` behavioral modes
+  - See [justdoit/README.md](justdoit/README.md) for details
+
 ## Getting Started
 
 1. Browse individual folder READMEs for setup and usage instructions
