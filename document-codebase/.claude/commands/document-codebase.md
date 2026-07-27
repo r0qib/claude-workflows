@@ -1,62 +1,117 @@
 ---
-description: Extract durable AI-context docs from this codebase for coding assistants
-argument-hint: "[maxUnits] [unitFilter]"
+description: Scaffold a docs tree and extract durable AI-context (business + UI behavior) from this codebase
+argument-hint: "[natural language — e.g. 'use 5 agents, just the auth module', or nothing]"
 ---
 
 # /document-codebase
 
-Document this codebase's business/functional logic into `docs/ai-context/` for AI
-coding assistants — what each unit does and why, never what it looks like.
+Scaffold a fixed documentation folder tree (create-if-missing) and document this
+codebase's business/functional logic and UI behavior into `docs/` for AI coding
+assistants — what each module/feature does, why, and how the user experiences it.
+Never visual styling; no line-number pinning.
 
 ## How it works
 
-**Incremental:** Units unchanged since the last run are skipped (fast idempotent operation).
+**Scaffold-then-fill:** Creates a predictable folder tree once, then fills only the
+`modules/` and `technical/` docs. The open folders (`business/`, `system/`,
+`project-management/`, `testing/`) get a single instructional stub and are left for you.
 
-**Parallel:** Changed units are documented in topologically-batched parallel extraction
-to avoid context-window exhaustion.
+**Create-if-missing:** Never overwrites or deletes anything that already exists —
+including a real `.claude/` in your repo, your edited docs, or the stubs.
 
-**Safe:** No hallucinations — every claim is cited to file:line in source.
+**Vertical slice:** `modules/<module>/<feature>/…` — module first, then features,
+going deeper only when a feature needs it.
+
+**Incremental:** Modules unchanged since the last run are skipped (git-diff based).
+
+**Dynamic & natural-language controlled:** You say how many agents to use and what to
+focus on in plain language; the command resolves it to concrete workflow args.
 
 ## Usage
 
 ```
-/document-codebase [maxUnits] [unitFilter]
+/document-codebase [plain-English instructions]
 ```
 
-- `maxUnits`: Process at most N units per run (default 10, max 25). Use smaller values
-  to review docs between batches.
-- `unitFilter`: Only process units whose id or title contains this string.
+Everything is optional. Examples:
 
-## Before you run
+- `/document-codebase` — document everything, auto agent count.
+- `/document-codebase use about 5 agents` — cap concurrency at ~5.
+- `/document-codebase just the auth and billing modules` — focus filter.
+- `/document-codebase only the payments feature, 3 agents` — focus + concurrency.
+- `/document-codebase re-scan everything from scratch` — force full refresh.
+- `/document-codebase put the docs under .ai` — override docs root.
 
-If `docs/ai-context/index.md` already exists, the command will:
-1. Read it to detect the last-run commit hash.
-2. Use `git diff` to identify changed units.
-3. Preserve unchanged units' rows in the output index.
+## Step 1 — Parse the instruction into args (natural language)
 
-## Running the workflow
+Read `$ARGUMENTS` and derive this arg object. Apply these rules; when the text is
+silent on a field, use the default.
 
-<workflow>
+| Arg | Type | Default | Derive from phrases like… |
+|---|---|---|---|
+| `agentBudget` | int or `null` | `null` (auto = `min(16, cores-2)`) | "use N agents", "spawn N workers", "keep it to N", "as many as needed" → `null` |
+| `focus` | string[] or `null` | `null` (everything) | "just/only the X module", "focus on X and Y", "the X feature" → `["x","y"]` (lowercased). Matches module/feature **id or title**, substring. |
+| `docsRoot` | string | `"docs"` | "put docs under Z", "into Z/" → `"z"` |
+| `aiTools` | string[] | `["claude"]` | "scaffold for cursor too", "all AI tools" → e.g. `["claude","cursor","copilot"]` |
+| `forceRefresh` | bool | `false` | "from scratch", "re-scan everything", "ignore the cache" → `true` |
+| `repoPath` | string | `"."` | rarely set; only if a different path is named |
 
-1. If `docs/ai-context/index.md` exists, read it now so we can carry forward unchanged units later.
+If a number is ambiguous ("a few agents"), pick a sensible small integer (e.g. 3-5) and
+say what you chose in Step 2. Never invent a `focus` that wasn't asked for — default to
+`null` (document everything).
 
-2. Invoke the workflow:
+## Step 2 — Echo the resolved plan
 
+Before invoking, state the resolved plan in one line so a misparse is visible, e.g.:
+
+> Resolved: focus = auth, billing · concurrency = 4 · docs → `docs/` · tools → `.claude` · refresh = no
+
+You are unattended by default — after echoing, **proceed** (do not block for confirmation).
+
+## Step 3 — Invoke the workflow
+
+```
 Workflow({
   scriptPath: ".claude/workflows/document-codebase.js",
-  args: { repoPath: ".", maxUnits: ${1:-10}, unitFilter: "${2:}" }
+  args: { repoPath: ".", docsRoot: <docsRoot>, aiTools: <aiTools>,
+          agentBudget: <agentBudget>, focus: <focus>, forceRefresh: <forceRefresh> }
 })
+```
 
-3. The workflow returns: `{ isFirstRun, headCommit, stackSummary, extracted, skippedUnchanged, removedUnitIds, deferred, stats }`
+The workflow returns:
+`{ docsRoot, headCommit, isFirstRun, stackSummary, technicalDocPlan, scaffold,
+   extractedModules, skippedUnchanged, removedModuleIds, deferred, resolved, stats }`
 
-</workflow>
+## Step 4 — Scaffold the folder tree (create-if-missing)
 
-## Rendering output
+Using `result.scaffold` and `result.docsRoot` (call it `ROOT`). **For every path below,
+check existence first — if it exists, skip it untouched. Never overwrite.**
 
-Based on the workflow result:
+**4a. AI-tool skeletons.** For each dir in `scaffold.aiToolDirs` (e.g. `.claude`), create
+`ROOT/<dir>/<sub>/` for each `sub` in `scaffold.aiToolSubdirs`
+(`agents`, `commands`, `skills`, `workflows`). If a subdir would be empty, drop a
+`.gitkeep` in it. If `ROOT/<dir>` already exists, leave the whole thing alone.
 
-**Step 1: Write or update `00-overview.md`** (only if this is the first run OR
-`stackSummary` is non-null):
+**4b. Open stub folders.** For each entry in `scaffold.stubFolders`
+(`business`, `system`, `project-management`, `testing`), create `ROOT/<path>/` and, only
+if it does not already exist, `ROOT/<path>/README.md` with:
+
+```markdown
+# <title>
+
+Organize your <path>-related content here.
+
+_This folder was scaffolded by /document-codebase and intentionally left open.
+Nothing here is auto-generated — it's yours to fill._
+```
+
+**4c. Real target folders.** Ensure `ROOT/modules/` and `ROOT/technical/` exist.
+
+## Step 5 — Write `00-overview.md`
+
+Write `ROOT/00-overview.md` only if this is the first run OR `stackSummary` is non-null.
+If it exists, preserve any hand-written prose in the body; only refresh the frontmatter
+and the auto sections.
 
 ```markdown
 ---
@@ -64,7 +119,6 @@ doc_type: overview
 generated_by: document-codebase workflow
 last_scanned_commit: <headCommit>
 updated: <ISO date, now>
-unit_granularity: <stackSummary.unitGranularity>
 primary_languages: <stackSummary.primaryLanguages>
 frameworks: <stackSummary.frameworks>
 architecture_pattern: <stackSummary.architecturePattern>
@@ -72,206 +126,206 @@ architecture_pattern: <stackSummary.architecturePattern>
 
 # <Repo Name> — AI Context Overview
 
-> Purpose: Durable functional/business context for AI coding assistants. Excludes
-> UI/visual detail. Regenerated incrementally — do not hand-edit frontmatter; prose
-> in the body survives re-runs.
+> Durable functional/business + UI-behavior context for AI coding assistants.
+> Excludes visual styling. Regenerated incrementally — prose in the body survives re-runs.
 
 ## 1. Purpose
-
-[hand-written or preserved from prior run]
+[hand-written or preserved]
 
 ## 2. Detected Stack
-
 - **Primary languages:** <stackSummary.primaryLanguages>
 - **Frameworks:** <stackSummary.frameworks>
 - **Architecture:** <stackSummary.architecturePattern>
 
-## 3. Architecture
+## 3. Entry Points
+- <stackSummary.entryPoints[...]>
 
-[hand-written or preserved from prior run]
+## 4. Modules
+See `index.md` for the full module → feature list.
 
-## 4. Entry Points
-
-- <stackSummary.entryPoints[0]>
-- ...
-
-## 5. Documentation Units
-
-See `index.md` for the full unit list.
-
-## 6. Notes & Open Questions
-
-[hand-written or preserved from prior run]
+## 5. Notes & Open Questions
+[hand-written or preserved]
 ```
 
-**Step 2: For each unit in `extracted`, write `docs/ai-context/<unit.type>/<unit.id>.md`:**
+## Step 6 — Write module & feature docs
+
+For each `module` in `extractedModules`:
+
+**6a. Module overview** → `ROOT/modules/<module.id>/_module.md`:
 
 ```markdown
 ---
-doc_type: unit
-unit_id: <unit.id>
-unit_type: <unit.type>
-title: <unit.title>
-paths: <unit.globs>
-depends_on: <record.dependsOn>
+doc_type: module
+module_id: <module.id>
+title: <module.title>
+paths: <module.globs>
 last_scanned_commit: <headCommit>
-confidence: <record.confidence>
+confidence: <module.overview.confidence>
 ---
 
-# <unit.title>
+# <module.title>
 
-> <record.oneLineSummary>
+> <module.overview.oneLineSummary>
+
+## Purpose
+<module.overview.purpose>
+
+## Behavior
+<module.overview.behavior>
+
+## Primary Users
+<module.overview.primaryUsers or "Not identified.">
+
+## Features
+<for each feature in module.features: - [<feature.title>](<feature.id>/<feature.id>.md) — <feature.record.oneLineSummary>>
+
+## Key Files
+<module.overview.keyReferences as `path` or `path::symbol` bullets; else "None identified.">
+
+## Open Questions
+<module.overview.openQuestions; else "None found.">
+```
+
+**6b. Each feature** → `ROOT/modules/<module.id>/<feature.id>/<feature.id>.md`.
+(If the extractor marked deeper sub-features, nest them the same way one level down.)
+
+```markdown
+---
+doc_type: feature
+module_id: <module.id>
+feature_id: <feature.id>
+title: <feature.title>
+paths: <feature.globs>
+depends_on: <feature.record.dependsOn>
+last_scanned_commit: <headCommit>
+confidence: <feature.record.confidence>
+---
+
+# <feature.title>
+
+> <feature.record.oneLineSummary>
 
 ## 1. Purpose & Primary Users
-
 <record.purpose>
 
 Primary users: <record.primaryUsers>
 
 ## 2. Behavior
-
 <record.behavior>
 
-## 3. Triggers & Inputs
+## 3. User Flows
+<record.userFlows as: **<flow>** then an ordered list of steps; else "None identified.">
 
-<record.triggersAndInputs as bullet list, each with source citation>
+## 4. Triggers & Inputs
+<record.triggersAndInputs as bullets (trigger / input / source if present); else "None identified.">
 
-If none: "None identified."
+## 5. Data Models
+<record.dataModels as bullets (name / fields / relationships / source if present); else "None identified.">
 
-## 4. Data Models
+## 6. API Surface
+<record.apiSurface as bullets (method+path or signature / request / response / errors / source if present); else "None identified.">
 
-<record.dataModels as bullet list, each with name, fields, relationships, source citation>
+## 7. Business Rules
+<record.businessRules as bullets (rule; Given/When/Then when present; source if present); else "None identified.">
 
-If none: "None identified."
+## 8. Permissions & Authorization
+<record.permissions as bullets (gate / condition / source if present); else "None identified.">
 
-## 5. API Surface
+## 9. Error Handling
+<record.errorHandling as bullets (errorType / trigger / userVisibleOutcome / source if present); else "None identified.">
 
-<record.apiSurface as bullet list, each with method/path/signature, request/response shape, error codes, source citation>
+## 10. States & Edge Cases
+<record.statesAndEdgeCases as bullets (condition / behavior); else "None identified.">
 
-If none: "None identified."
+## 11. Dependencies
+<record.dependsOn as bullets (one-hop unit/module names); else "None identified.">
 
-## 6. Business Rules
+## 12. Key Files
+<record.keyReferences as `path` or `path::symbol` bullets; else "None identified.">
 
-<record.businessRules as bullet list, each with rule/given/when/then, source citation>
-
-If none: "None identified."
-
-## 7. Permissions & Authorization
-
-<record.permissions as bullet list, each with gate/condition, source citation>
-
-If none: "None identified."
-
-## 8. Error Handling
-
-<record.errorHandling as bullet list, each with error type/trigger/outcome, source citation>
-
-If none: "None identified."
-
-## 9. States & Edge Cases
-
-<record.statesAndEdgeCases as bullet list, each with condition/behavior>
-
-If none: "None identified."
-
-## 10. Dependencies
-
-One-hop only (see step 10 in this file's frontmatter `depends_on`):
-
-<for each id in record.dependsOn:>
-- <id>: [see docs/ai-context/<type>/<id>.md]
-
-If none: "None identified."
-
-## 11. Open Questions
-
-<record.openQuestions as bullet list>
-
-If none: "None found."
-
-## 12. Source Index
-
-<deduplicate all source citations from steps above, render as path:line or path:line-line>
-
-If none: "No citations."
+## 13. Open Questions
+<record.openQuestions as bullets; else "None found.">
 ```
 
-**Step 3: Write or update `docs/ai-context/index.md`:**
+> No "Source Index" section, and no line numbers anywhere. References are file paths or
+> `path::symbol` only.
+
+## Step 7 — Write technical docs
+
+For each entry in `technicalDocPlan`, write `ROOT/technical/<id>.md` (create-if-missing;
+if it exists, leave it) with a frontmatter (`doc_type: technical`, `title`,
+`last_scanned_commit`) and a body seeded from the entry's `purpose` plus the relevant
+`stackSummary` fields (`buildAndRun`, `conventions`, `entryPoints`, `architecturePattern`).
+These are project-level docs, not per-module.
+
+## Step 8 — Write `index.md`
+
+Write `ROOT/index.md`:
 
 ```markdown
 ---
 doc_type: index
 last_run_commit: <headCommit>
 last_run_at: <ISO date, now>
-units:
-  - id: <u.id>
-    title: <u.title>
-    type: <u.type>
-    doc: <type>/<id>.md
-    summary: <oneLineSummary>
-    depends_on: <record.dependsOn>
+modules:
+  - id: <module.id>
+    title: <module.title>
+    doc: modules/<module.id>/_module.md
+    summary: <module.overview.oneLineSummary>
+    features: <list of feature ids>
     last_scanned_commit: <headCommit>
     status: documented
-  [... for each unit in extracted]
-  [... PLUS carry forward all prior units from the old index.md that appear in skippedUnchanged]
+  [... for each module in extractedModules]
+  [... PLUS carry forward all prior modules listed in skippedUnchanged from the old index.md]
 ---
 
 # AI Context Index
 
-All documentation units in this codebase (updated <ISO date, now>):
+Updated <ISO date, now>.
 
-| Unit | Type | Summary | Depends On | Last Scanned | Doc |
-|------|------|---------|-----------|----------------|-----|
-<for each unit in frontmatter.units>
-| <unit.id> | <unit.type> | <unit.summary> | <unit.depends_on join with ', '> | <unit.last_scanned_commit short SHA (first 7 chars)> | [view](<unit.doc>) |
-...
+| Module | Summary | Features | Last Scanned | Doc |
+|--------|---------|----------|--------------|-----|
+<row per module: id | summary | feature count | short SHA (first 7) | [view](modules/<id>/_module.md)>
 
 ## Removed — pending human review
 
-The following units' source code no longer exists (no files matched their globs).
-Their doc files remain on disk; delete manually if no longer needed:
-
-<for each id in removedUnitIds:>
-- **<id>** (was: <prior title from old index, or "unknown">): `docs/ai-context/<type>/<id>.md`
-
-To proceed, either delete the doc file and re-run this command, or restore the
-source code for the unit.
+<for each id in removedModuleIds: - **<id>**: `modules/<id>/` — source no longer matches its globs; delete manually if no longer needed.>
 ```
 
-## Final report
+Carry forward unchanged modules' rows from the previous `index.md` untouched.
 
-Report to the user:
+## Step 9 — Final report
 
 ```
-✓ Documentation complete!
+✓ Documentation run complete.
 
-Extracted this run: <stats.extractedThisRun> units
-Unchanged (carried forward): <stats.unchanged> units
-Total documented: <stats.extractedThisRun + stats.unchanged> units
+Resolved plan: concurrency = <resolved.agentBudget> · focus = <resolved.focus or "all"> · docs → <docsRoot>/ · tools → <resolved.aiToolDirs>
 
-Deferred to next run: <stats.deferred> units
-(run /document-codebase again to continue)
+Scaffolded (created if missing): <docsRoot>/{<aiToolDirs>, business, system, project-management, technical, testing}/
+Modules documented this run: <stats.extractedThisRun> (<stats.featuresExtracted> features)
+Unchanged (carried forward): <stats.unchanged>
+Deferred by focus filter: <stats.deferred>
+Removed (flagged): <stats.removed>
 
-Output: docs/ai-context/
-- 00-overview.md
-- index.md
-- <type>/<id>.md (x<stats.extractedThisRun>)
+Output: <docsRoot>/
+- 00-overview.md, index.md
+- modules/<id>/_module.md + <feature>/<feature>.md
+- technical/<id>.md
 
-<if removedUnitIds.length > 0>
-⚠️  Removed units: see "Removed — pending human review" in index.md
-</if>
+<if removedModuleIds.length> ⚠️  See "Removed — pending human review" in index.md </if>
+<if any Step-1 defaults were assumed from ambiguous input, note them here.>
 ```
 
 ## Troubleshooting
 
-**"Recon phase failed"** — The workflow couldn't inspect the repository. Check:
-- Is this a git repository? (`git status` should work)
-- Can Claude Code read your source files? (check permissions)
+**"Recon phase failed"** — Not inspectable. Is this a git repo (`git status` works)? Can
+Claude Code read the source files?
 
-**"No units found"** — The workflow couldn't auto-detect a sensible unit granularity.
-Manually create or extend `docs/ai-context/00-overview.md` with guidance on how to
-partition your codebase, then re-run.
+**"No modules identified"** — Recon couldn't partition the repo. Add a note in
+`docs/00-overview.md` describing your module boundaries and re-run.
 
-**"Removed units" section appears** — Source code for a previously-documented unit
-is now gone. Review the list and either delete the doc file or restore the source,
-then re-run.
+**Modules keep getting re-extracted** — Check `index.md`'s `last_run_commit` is a valid
+commit in this repo. If git diff misbehaves, delete `index.md` and re-run for a fresh pass.
+
+**A real `.claude/` (or edited doc) got changed** — It should not. Scaffolding is
+create-if-missing; report this as a bug if you see an existing file overwritten.

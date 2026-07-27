@@ -1,40 +1,65 @@
 # document-codebase: AI-Context Documentation Workflow
 
-A generic, reusable Claude Code Workflow that extracts durable business/functional context from arbitrary codebases, producing standardized markdown documentation for AI coding assistants.
+A generic, reusable Claude Code Workflow that scaffolds a predictable documentation folder
+tree and extracts durable business/functional context — plus UI behavior — from arbitrary
+codebases, for AI coding assistants.
 
 ## What it does
 
 Given any existing codebase, `document-codebase`:
 
-1. **Auto-detects stack** (languages, frameworks, architecture pattern)
-2. **Discovers documentation units** (features, routes, or modules — auto-chosen per codebase)
-3. **Incrementally re-extracts** (only units changed since last run; skips unchanged for speed)
-4. **Produces three doc types** in `docs/ai-context/`:
-   - `00-overview.md` — project spec (stack, architecture, unit list)
-   - `features/<slug>.md` (or `routes/`, `modules/` per granularity) — per-unit functional context
-   - `index.md` — manifest tracking which units were documented when
+1. **Scaffolds a fixed folder tree** under `docs/` (create-if-missing, never overwrites).
+2. **Auto-detects the stack** (languages, frameworks, architecture) → `technical/`.
+3. **Discovers a module → feature tree** (vertical slice) and documents each.
+4. **Incrementally re-extracts** — only modules changed since the last run (git-diff based).
+5. **Is controlled in natural language** — you say how many agents to use and what to focus
+   on; the slash command resolves it to concrete args.
 
-**What it documents:**
-- Purpose, behavior, what it does and why — **never visual detail**
-- Inputs, outputs, data models, API surface, permissions, business rules, error handling, edge cases
-- One-hop dependencies (what other units this unit calls)
-- Every claim cited to `file:line` in source code
+**What it documents (for `modules/` and `technical/`):**
+- Purpose, behavior, and **how the user experiences it** (user flows, navigation, states)
+- Inputs, outputs, data models, API surface, permissions, business rules, error handling
+- One-hop dependencies (names of other units this one calls)
+- Grounded in real code — references by file path or `path::symbol`
 
 **What it ignores:**
-- Colors, fonts, spacing, layout, component visual style
-- Hallucination — strict "cite or skip" discipline
+- Visual styling — colors, fonts, spacing, layout, component look
+- Hallucination — unsupported claims become open questions, not invented facts
+- **Line numbers** — references are paths/symbols, which don't rot on the next edit
+
+## The generated folder tree
+
+```
+docs/                          (docsRoot — override with "put docs under .ai")
+├── .claude/                   AI-tool skeleton (agents/ commands/ skills/ workflows/)
+│                              — real dot-dir; add .cursor/ .github/ via aiTools
+├── business/                  STUB — instructional README, left open for you
+├── modules/                   REAL — vertical slice, the main extraction target
+│   └── <module>/
+│       ├── _module.md         module overview + feature list
+│       └── <feature>/
+│           └── <feature>.md   functional / business / UI-behavior context
+├── system/                    STUB — left open
+├── project-management/        STUB — left open
+├── technical/                 REAL — project-level technical docs (stack, arch, build/run)
+└── testing/                   STUB — left open
+```
+
+The four stub folders each get one short instructional `README.md` and are never
+auto-filled. `modules/` and `technical/` hold the extracted content. Anything that already
+exists — including a real `.claude/` in your repo or docs you've hand-edited — is left
+untouched.
 
 ## Design principles
 
-- **Generic**: works on any stack, any structure, any codebase
-- **Incremental**: re-run fast by skipping unchanged units (git-diff based)
-- **Parallel**: topologically-batched extraction avoids context-window exhaustion
-- **Non-destructive**: flagged-not-deleted outputs; human review required for removal
-- **Verifiable**: every non-trivial claim has a source citation in the docs
+- **Less opinionated:** you control agent count, focus, and docs root in plain language.
+- **Predictable structure:** a fixed tree, not an auto-chosen granularity.
+- **Idempotent:** create-if-missing everywhere; unchanged modules skipped (git-diff).
+- **Non-destructive:** removals are flagged for human review, never deleted.
+- **Read-only extraction:** agents never write; the slash command renders every file.
 
 ## Installation (copy to your target repo)
 
-This is a portable, drop-in tool — three files, no dependencies beyond Claude Code + git.
+Three files, no dependencies beyond Claude Code + git.
 
 ```bash
 cp -r .claude/skills/codebase-context-extractor <target-repo>/.claude/skills/
@@ -42,179 +67,105 @@ cp .claude/workflows/document-codebase.js       <target-repo>/.claude/workflows/
 cp .claude/commands/document-codebase.md        <target-repo>/.claude/commands/
 ```
 
-(See `INSTALL.md` for the same steps spelled out individually.)
-
-No config file, no per-repo setup — the workflow auto-detects stack and structure on first run.
+(See `INSTALL.md` for the same steps spelled out.) No config file — the workflow
+auto-detects stack and structure on first run.
 
 ## Usage
 
-In the target repository, run:
+In the target repository:
 
 ```
-/document-codebase [maxUnits] [unitFilter]
+/document-codebase [plain-English instructions]
 ```
 
-Both arguments are optional and positional — `maxUnits` first, `unitFilter` second.
+Everything is optional and expressed in natural language. The command parses your text into
+concrete workflow args and **echoes the resolved plan** before running.
 
-| Arg | Type | Default | Meaning |
-|---|---|---|---|
-| `maxUnits` | integer | `10` (hard cap `25`) | Max number of new/stale units to extract **this run**. Anything beyond the cap is deferred, not skipped — it's picked up automatically on your next run. |
-| `unitFilter` | string | none (no filter) | Only consider units whose `id` or `title` **contains** this substring. Plain substring match — not a glob or regex. Applied *before* `maxUnits`, so it narrows the candidate pool first, then caps within that. |
+| You say… | Resolves to |
+|---|---|
+| `/document-codebase` | everything, auto agent count |
+| `use about 5 agents` | `agentBudget: 5` (concurrency cap) |
+| `just the auth and billing modules` | `focus: ["auth","billing"]` |
+| `only the payments feature, 3 agents` | `focus: ["payments"], agentBudget: 3` |
+| `re-scan everything from scratch` | `forceRefresh: true` |
+| `put the docs under .ai` | `docsRoot: ".ai"` |
+| `scaffold for cursor too` | `aiTools: ["claude","cursor"]` |
 
-### Common invocations
+### How agent count actually works
 
-```
-/document-codebase
-```
-Default run: detect/refresh up to 10 new-or-stale units, no filter. This is what you want for routine re-runs on a repo you've already documented once.
+`agentBudget` is a **real concurrency cap** — the extraction work-list is chunked so no more
+than that many agents run at once. Omit it and it's `auto` (`min(16, cores-2)`, the engine's
+own cap). There is **no hidden per-run unit cap** (the old `maxUnits ≤ 25` is gone). If a
+`focus` filter excludes some modules, they're reported as `deferred`, never silently dropped.
 
-```
-/document-codebase 25
-```
-Raise the ceiling to the max (25) for a big push on a large repo — still bounded, just less deferral.
+### First run vs. later runs
 
-```
-/document-codebase 5 auth
-```
-Only touch units related to "auth" (matches `id` or `title`), capped at 5. Use this for a targeted re-doc of one area without disturbing the rest of the manifest.
+**First run:** detects stack, discovers the module→feature tree, scaffolds the folder tree,
+writes `00-overview.md`, `index.md`, `modules/**`, and `technical/**`.
 
-```
-/document-codebase 25 payment
-```
-Filter to "payment"-related units, but don't cap below what the filter already found (up to 25).
-
-### Resuming an incomplete run (the case you'll hit on large repos)
-
-If a run's candidate unit count exceeds `maxUnits`, the extra units are **not lost** — they're recorded in the result as `deferred` and reported to you at the end:
-
-```
-Deferred to next run: 14 units
-(run /document-codebase again to continue)
-```
-
-To pick up where you left off, run the exact same command again:
-
-```
-/document-codebase
-```
-
-Each run re-reads `index.md`'s `last_run_commit`, git-diffs from there, and re-classifies every previously known unit as `stale`/`unchanged`/`removed` — units that were merely *deferred* (not yet extracted, source unchanged) will simply be re-proposed as candidates and picked up in commit-hash order until the whole backlog is documented. No flags needed to "resume" — deferral + re-run is the resume mechanism. If you want to fast-forward through a large backlog, just bump `maxUnits` on the next call instead of running the default repeatedly.
-
-**First run on a repo:**
-- Auto-detects stack, proposes unit boundaries (feature/route/module — chosen automatically per codebase)
-- Extracts up to `maxUnits` units; defers the rest
-- Writes `00-overview.md`, `index.md`, and per-unit docs under `docs/ai-context/`
-
-**Later runs on the same repo:**
-- Reads `index.md` to get the last-run commit hash
-- Runs `git diff` against it to find changed files
-- Re-extracts only `stale` units (touched files) and any still-`deferred` units; skips `unchanged` ones entirely (fast, idempotent)
-- Updates `index.md` manifest, carrying forward unchanged units untouched
-
-### How it partitions a codebase
-
-The Recon phase picks the unit granularity per repo, not globally — it looks for:
-- **feature/domain** boundaries if there's an obvious `features/`, `pages/`, or `domains/` directory
-- **route/endpoint** boundaries if routes are centralized and orthogonal (e.g. Express `routes/`)
-- **module/top-level** as the fallback for anything else
-
-Each unit gets a stable kebab-case `id`, a `title`, a `type`, and a list of file `globs` that define its read scope. This choice (and the rationale for it) is written into `00-overview.md` on first run — if it picks a granularity you disagree with, edit `00-overview.md`'s unit guidance and re-run rather than fighting the auto-detection.
+**Later runs:** reads `index.md`'s `last_run_commit`, `git diff`s against it, re-extracts
+only `stale` modules (touched files) and any `new` ones, carries `unchanged` modules forward
+untouched, and flags `removed` modules for manual review.
 
 ## Architecture
 
 ### Three-phase Workflow
 
-The workflow script (`.claude/workflows/document-codebase.js`) runs:
+`.claude/workflows/document-codebase.js`:
 
-1. **Recon** — One agent inspects the repo, detects stack, proposes unit list, git-diffs to classify each unit (new/stale/unchanged/removed)
-2. **Map** — One agent builds a best-effort dependency graph (grepped imports)
-3. **Extract** — Topologically-batched parallel agents, one per unit, with one-hop dependency summaries only
-4. **Reconcile** — Pure JS: merge new records with untouched prior records
+1. **Recon** — one agent: detect stack, discover the module→feature tree, plan technical
+   docs, and git-diff to classify each module (new/stale/unchanged/removed).
+2. **Extract** — a flat, dynamic `parallel()` fan-out: one read-only agent per module
+   (auto-split to one per feature for `large` modules), throttled to `agentBudget`.
+3. **Reconcile** — pure JS: group feature records under their module, synthesize overviews
+   for split modules, merge with carried-forward unchanged records.
 
-Agents are **read-only by design**; the calling slash command handles all file rendering.
+> The v1 **Map** phase and its Tarjan-SCC / topological-batching machinery have been
+> removed. Dependencies are still *noted* per unit as free-text, but no longer drive
+> ordering — extraction is a flat dynamic fan-out.
+
+Agents are **read-only by design**; the slash command handles all file rendering.
 
 ### Extraction Skill
 
-The `codebase-context-extractor` skill (`.claude/skills/codebase-context-extractor/SKILL.md`) governs per-unit extraction:
+`.claude/skills/codebase-context-extractor/SKILL.md` governs extraction:
 
-- One unit at a time (caller orchestrates boundaries)
-- Golden rules: "describe what it does, never what it looks like" + "never hallucinate — cite file:line"
-- Scoped to the unit's globs only (no overlap, prevents duplicate output across parallel agents)
-- Returns structured JSON (not markdown) for the calling command to render
+- Golden rule: *"describe what it does, why, and how the user experiences it — never how
+  it's styled."* UI behavior/flows are in scope; visual styling is not.
+- Never hallucinate; unsupported claims become open questions.
+- References by file path or `path::symbol` — **no line numbers**.
+- Scoped to the unit's globs only (no overlap, prevents duplicate output).
+- Returns structured JSON (not markdown) for the command to render.
 
-### Output Structure
+## Known limitations
 
-```
-docs/ai-context/
-├── 00-overview.md          (project spec, one-time or regenerated on stack change)
-├── index.md                (manifest: lists all units + git commit hash per unit)
-├── features/
-│   ├── auth.md
-│   ├── billing.md
-│   └── ...
-├── routes/                 (or features/ or modules/, depending on detected granularity)
-└── modules/
-```
-
-Each unit doc:
-- 12 fixed sections (purpose, behavior, models, API surface, permissions, etc.)
-- Target <200 lines (progressive disclosure)
-- YAML frontmatter with globs, dependencies, last-scanned commit, confidence level
-- Every section cites sources as `file:line`
-
-## Incremental re-documentation
-
-**First run:** Extracts all units.
-
-**Later run:** Detects git-diff changes:
-- Changed files → their unit(s) marked `stale` and re-extracted
-- Unchanged unit → skipped, prior record carried forward into new `index.md`
-- Missing unit's source → marked `removed`, flagged for manual review
-
-No cascading staleness: if unit A depends on unit B and B changes, only B is re-extracted.
-A stays unchanged (confirmed by design to keep re-run scope bounded).
-
-## Known limitations (v1)
-
-1. **No cascading staleness.** Changed dependency does not auto-invalidate dependents (by design, to bound re-run cost).
-2. **No automatic tech-stack changes.** If framework/language changes, use `forceRefresh: true` or manually delete `00-overview.md`.
-3. **Dependency detection is grepped, not AST-based.** May miss circular or dynamic imports; treated as best-effort.
-4. **No hallucination verifier agent.** Strict-prompting only. Recommend periodic manual spot audits of claim citations.
+1. **No cascading staleness.** A changed dependency does not auto-invalidate its dependents
+   (bounds re-run cost). Re-run with `forceRefresh` if you need a full pass.
+2. **No AST-accurate dependency graph.** Dependencies are noted heuristically as names only.
+3. **No hallucination verifier agent.** Strict prompting only — periodic manual spot audits
+   of the `keyReferences` are recommended.
+4. **NL parsing is best-effort.** The command echoes the resolved plan so a misparse is
+   visible before extraction runs.
 
 ## Troubleshooting
 
-**"Recon phase failed"**
-- Ensure this is a git repository (`git status` works)
-- Ensure Claude Code can read source files
+**"Recon phase failed"** — Ensure this is a git repo (`git status` works) and Claude Code can
+read the source files.
 
-**"No units found"**
-- Repository structure doesn't match auto-detect heuristics
-- Manually create/extend `docs/ai-context/00-overview.md` with unit guidance and re-run
+**"No modules identified"** — Add module-boundary guidance to `docs/00-overview.md` and re-run.
 
-**Units keep getting re-extracted**
-- Check `index.md`'s `last_run_commit`: is it a valid git commit in this repo?
-- Check git history: has HEAD moved since last run? (expected)
-- If git diff is malfunctioning, manually delete `index.md` and re-run to force fresh extraction
+**Modules keep getting re-extracted** — Check `index.md`'s `last_run_commit` is a valid commit.
+If git diff misbehaves, delete `index.md` and re-run for a fresh pass.
 
-**"Removed units" in index**
-- Source code for a previously-documented unit disappeared
-- Either delete the doc file or restore the source, then re-run
-
-## Design documents
-
-- **Skill**: `.claude/skills/codebase-context-extractor/SKILL.md` — extraction discipline, rules, golden rules
-- **Workflow script**: `.claude/workflows/document-codebase.js` — four phases, schemas, orchestration logic
-- **Slash command**: `.claude/commands/document-codebase.md` — entry point, renders all output doc types
-
-## Related
-
-- **Research findings**: This design was informed by a deep-research pass across industry practice (Gitingest, Sourcegraph Cody, Anthropic's own multi-agent system, academic codebase-to-docs systems CodeWiki and DocAgent).
-- **Reusable skill**: The `codebase-context-extractor` skill can also be invoked directly on a single unit (not just via this workflow) if needed for targeted extraction.
+**"Removed" section appears** — Source for a previously-documented module is gone. Delete the
+doc folder or restore the source, then re-run.
 
 ## License
 
-This is a generic, open-ended tool for codebase documentation. Use it freely on any codebase, for any purpose.
+A generic, open-ended tool for codebase documentation. Use it freely on any codebase.
 
 ---
 
-> Built as R&D at Brain Station 23 PLC, exploring how existing codebases can be brought to AI-DLC readiness — durable, machine-readable context that lets AI coding assistants work on a codebase without re-deriving it from scratch each time.
+> Built as R&D at Brain Station 23 PLC, exploring how existing codebases can be brought to
+> AI-DLC readiness — durable, machine-readable context that lets AI coding assistants work on
+> a codebase without re-deriving it from scratch each time.

@@ -22,12 +22,19 @@ cp .claude/commands/document-codebase.md <your-repo>/.claude/commands/
 
 ## Done
 
-In your target repository, you can now run:
+In your target repository, run:
 
 ```
-/document-codebase [maxUnits:number] [UnitFilter:string]
+/document-codebase [plain-English instructions]
 ```
 
-The workflow will auto-detect your codebase's stack and structure, then extract documentation into `docs/ai-context/`.
+Everything is optional and natural-language. Examples:
 
-See `README.md` for usage details.
+- `/document-codebase` — document everything, auto agent count
+- `/document-codebase use 5 agents, just the auth module` — concurrency + focus
+- `/document-codebase re-scan from scratch` — full refresh
+- `/document-codebase put docs under .ai` — override the docs root
+
+The workflow scaffolds a fixed folder tree under `docs/` (create-if-missing) and extracts
+documentation into `docs/modules/**` and `docs/technical/**`. It never overwrites existing
+files. See `README.md` for the full folder tree and usage details.
